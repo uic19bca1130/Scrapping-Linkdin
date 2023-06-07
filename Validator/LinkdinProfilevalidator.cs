@@ -17,4 +17,4 @@ public class LinkdinProfileValidator : AbstractValidator<LinkdinProfile>
         // Return true if the URL is valid; otherwise, return false
         return Uri.TryCreate(url, UriKind.Absolute, out _);
     }
-}   
+}

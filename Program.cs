@@ -47,13 +47,13 @@ app.UseHttpsRedirection();
 
 
 
-var summaries = new[]
+//var summaries = new[]
+//{
+    //"Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
+//};
+app.MapPost("/sendlink", async (ServiceBusClient client, IConfiguration configuration, [FromBody] LinkdinProfile linkdinProfile, IValidator<LinkdinProfile> validator) =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-app.MapPost("/sendlink", async (ServiceBusClient client, IConfiguration configuration, [FromBody] LinkdinProfile linkModel, IValidator<LinkdinProfile> validator) =>
-{
-    ValidationResult validationResult = validator.Validate(linkModel);
+    ValidationResult validationResult = validator.Validate(linkdinProfile);
     if (!validationResult.IsValid)
     {
         var messages = new List<string>();
@@ -65,8 +65,8 @@ app.MapPost("/sendlink", async (ServiceBusClient client, IConfiguration configur
         //  return Results.BadRequest(validationResult.Errors);
     }
     string queueName = configuration.GetValue<string>("QueueName");
-    string partitionKey = linkModel.PartitionKey;
-    string linkedInProfileLink = linkModel.ProfileId;
+    string partitionKey = linkdinProfile.PartitionKey;
+    string linkedInProfileId = linkdinProfile.ProfileId;    
 
 
 
@@ -75,7 +75,7 @@ app.MapPost("/sendlink", async (ServiceBusClient client, IConfiguration configur
 
 
     // Create a Service Bus message with the LinkedIn profile link
-    ServiceBusMessage message = new ServiceBusMessage(linkedInProfileLink)
+    ServiceBusMessage message = new ServiceBusMessage(linkedInProfileId)
     {
         PartitionKey = partitionKey
     };
@@ -88,6 +88,7 @@ app.MapPost("/sendlink", async (ServiceBusClient client, IConfiguration configur
         throw;
     }
     // Send the message to the queue
+
 
     // Return a JSON response
     return Results.Ok(new { message12 = "LinkedIn profile link sent to Azure Service Bus" });
