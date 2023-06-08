@@ -1,14 +1,9 @@
 using Azure.Messaging.ServiceBus;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
-using FluentValidation.Results;
-using Azure;
-using Microsoft.AspNetCore.Components.Forms;
 using Scrapping_Linkdin.Models.Request;
 
 var builder = WebApplication.CreateBuilder(args);
-
-
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -19,8 +14,6 @@ IConfiguration configuration = new ConfigurationBuilder()
        .AddJsonFile("appsettings.json")
        .Build();
 
-
-
 builder.Services.AddSingleton<ServiceBusClient>(serviceProvider =>
 {
     string connectionString = configuration.GetConnectionString("ServiceBusConnection");
@@ -28,12 +21,9 @@ builder.Services.AddSingleton<ServiceBusClient>(serviceProvider =>
 });
 builder.Services.AddTransient<IValidator<LinkdinProfile>, LinkdinProfileValidator>();
 
-
-
+builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 var app = builder.Build();
-
-
-
+//builder.Services.AddScoped<ConsoleAppService>();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -41,57 +31,69 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-
-
 app.UseHttpsRedirection();
 
-
-
-//var summaries = new[]
-//{
-    //"Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-//};
-app.MapPost("/sendlink", async (ServiceBusClient client, IConfiguration configuration, [FromBody] LinkdinProfile linkdinProfile, IValidator<LinkdinProfile> validator) =>
+app.MapPost("/sendlink", async (HttpContext context, ServiceBusClient client, IConfiguration configuration, [FromBody] LinkdinProfile linkdinProfile, IValidator<LinkdinProfile> validator) =>
 {
-    ValidationResult validationResult = validator.Validate(linkdinProfile);
-    if (!validationResult.IsValid)
-    {
-        var messages = new List<string>();
-        foreach (ValidationFailure failure in validationResult.Errors)
-        {
-            messages.Add(failure.ErrorMessage);
-        }
-        return Results.BadRequest(messages);
-        //  return Results.BadRequest(validationResult.Errors);
-    }
-    string queueName = configuration.GetValue<string>("QueueName");
+    string sendQueueName = configuration.GetValue<string>("SendQueueName");
+    string receiveQueueName = configuration.GetValue<string>("ReceiveQueueName");
     string partitionKey = linkdinProfile.PartitionKey;
-    string linkedInProfileId = linkdinProfile.ProfileId;    
+    string linkedInProfileLink = linkdinProfile.ProfileId;
 
-
-
-    await using ServiceBusSender sender = client.CreateSender(queueName);
-
-
+    await using ServiceBusSender sender = client.CreateSender(sendQueueName);
 
     // Create a Service Bus message with the LinkedIn profile link
-    ServiceBusMessage message = new ServiceBusMessage(linkedInProfileId)
+    ServiceBusMessage message = new ServiceBusMessage(linkedInProfileLink)
     {
         PartitionKey = partitionKey
     };
     try
     {
+        // Send the message to the queue
         await sender.SendMessageAsync(message);
+        await Task.Delay(5000);
+
     }
     catch (Exception)
     {
         throw;
     }
-    // Send the message to the queue
 
+    ServiceBusReceivedMessage? responseMessage = null;
 
-    // Return a JSON response
-    return Results.Ok(new { message12 = "LinkedIn profile link sent to Azure Service Bus" });
+    await using (ServiceBusReceiver receiver = client.CreateReceiver(receiveQueueName))
+    {
+
+        while (responseMessage == null)
+        {
+            IEnumerable<ServiceBusReceivedMessage> receivedMessages = await receiver.ReceiveMessagesAsync(maxMessages: 100);
+
+            if (receivedMessages.Any())
+            {
+                foreach (var item in receivedMessages)
+                {
+                    if (item.PartitionKey == partitionKey)
+                    {
+                        string response = item.Body.ToString();
+
+                        // Complete the response message to remove it from the receive queue
+                        await receiver.CompleteMessageAsync(item);
+
+                        // Return the response as JSON
+                        await context.Response.WriteAsJsonAsync(new { Data = response });
+                        return response;
+                    }
+                }
+            }
+
+            // Optional: Add delay between receive attempts to avoid continuous polling
+            //await Task.Delay(TimeSpan.FromSeconds(5)); // Adjust delay duration as needed
+        }
+    }
+
+    // If no response with matching partition key is available, return a JSON response indicating it
+    await context.Response.WriteAsJsonAsync(new { Data = "No matching response available" });
+    return null;
 });
 
 
