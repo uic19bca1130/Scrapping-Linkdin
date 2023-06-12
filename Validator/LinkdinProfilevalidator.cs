@@ -5,7 +5,7 @@ public class LinkdinProfileValidator : AbstractValidator<LinkdinProfile>
 {
     public LinkdinProfileValidator()
     {
-        RuleFor(x => x.PartitionKey).NotEmpty();
+        //RuleFor(x => x.PartitionKey).NotEmpty();
         RuleFor(x => x.ProfileId).NotEmpty().Must(BeAValidUrl).WithMessage("Invalid URL format");
     }
 

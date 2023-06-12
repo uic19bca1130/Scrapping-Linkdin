@@ -2,7 +2,6 @@
 {
     public class LinkdinProfile
     {
-        public string ProfileId { get; set; }
-        public string PartitionKey { get; set; } 
+        public string ProfileId { get; set; }     
     }
 }
