@@ -41,6 +41,8 @@ app.MapPost("/sendlink", async (HttpContext context, ServiceBusClient client, IC
 
     await using ServiceBusSender sender = client.CreateSender(sendQueueName);
     // Create a Service Bus message with the LinkedIn profile link
+
+
     ServiceBusMessage message = new ServiceBusMessage(linkedInProfileLink)
     {
         PartitionKey = partitionKey
@@ -48,20 +50,18 @@ app.MapPost("/sendlink", async (HttpContext context, ServiceBusClient client, IC
     try
     {
         await sender.SendMessageAsync(message);
-        await Task.Delay(9000);
+        await Task.Delay(8000);
     }
     catch (Exception)
     {
         throw;
     }
-    ServiceBusReceivedMessage responseMessage = null;
+    ServiceBusReceivedMessage? responseMessage = null;
     await using (ServiceBusReceiver receiver = client.CreateReceiver(receiveQueueName))
     {
         while (responseMessage == null)
         {
             IEnumerable<ServiceBusReceivedMessage> receivedMessages = await receiver.ReceiveMessagesAsync(maxMessages: 100);
-
-
 
             if (receivedMessages.Any())
             {
@@ -70,12 +70,13 @@ app.MapPost("/sendlink", async (HttpContext context, ServiceBusClient client, IC
                 {
                     string response = responseMessage.Body.ToString();
                     await receiver.CompleteMessageAsync(responseMessage);
+
                     return response;
                 }
             }
         }
     }
-    await context.Response.WriteAsJsonAsync(new { Data = "No matching response available" });
+    await context.Response.WriteAsJsonAsync(new { Data = "There was no matching response"});
     return null;
 });
 

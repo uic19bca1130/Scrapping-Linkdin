@@ -2,6 +2,6 @@
 {
     public class LinkdinProfile
     {
-        public string ProfileId { get; set; }     
+        public string? ProfileId { get; set; }     
     }
 }
