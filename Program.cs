@@ -1,83 +1,193 @@
+using AspNetCoreRateLimit;
 using Azure.Messaging.ServiceBus;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using Scrapping_Linkdin.Models.Request;
 
-var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-IConfiguration configuration = new ConfigurationBuilder()
-    .SetBasePath(Directory.GetCurrentDirectory())
-    .AddJsonFile("appsettings.json")
-    .Build();
-
-builder.Services.AddSingleton<ServiceBusClient>(serviceProvider =>
+namespace Scrapping_Linkdin
 {
-    string connectionString = configuration.GetConnectionString("ServiceBusConnection");
-    return new ServiceBusClient(connectionString);
-});
-builder.Services.AddTransient<IValidator<LinkdinProfile>, LinkdinProfileValidator>();
-builder.Services.AddValidatorsFromAssemblyContaining<Program>();
-
-var app = builder.Build();
-
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
-
-app.UseHttpsRedirection();
-
-app.MapPost("/sendlink", async (HttpContext context, ServiceBusClient client, IConfiguration configuration, [FromBody] LinkdinProfile linkdinProfile, IValidator<LinkdinProfile> validator) =>
-
-{
-    string sendQueueName = configuration.GetValue<string>("SendQueueName")!;
-    string receiveQueueName = configuration.GetValue<string>("ReceiveQueueName")!;
-    var partitionKey = Guid.NewGuid().ToString();
-    string linkedInProfileLink = linkdinProfile.ProfileId;
-
-
-    await using ServiceBusSender sender = client.CreateSender(sendQueueName);
-    // Create a Service Bus message with the LinkedIn profile link
-
-
-    ServiceBusMessage message = new ServiceBusMessage(linkedInProfileLink)
+    public class Program
     {
-        PartitionKey = partitionKey
-    };
-    try
-    {
-        await sender.SendMessageAsync(message);
-        await Task.Delay(8000);
-    }
-    catch (Exception)
-    {
-        throw;
-    }
-    ServiceBusReceivedMessage? responseMessage = null;
-    await using (ServiceBusReceiver receiver = client.CreateReceiver(receiveQueueName))
-    {
-        while (responseMessage == null)
+        public static void Main(string[] args)
         {
-            IEnumerable<ServiceBusReceivedMessage> receivedMessages = await receiver.ReceiveMessagesAsync(maxMessages: 100);
+            var builder = CreateHostBuilder(args);
+            var host = builder.Build();
 
-            if (receivedMessages.Any())
-            {
-                responseMessage = receivedMessages.FirstOrDefault(e => e.PartitionKey == partitionKey)!;
-                if (responseMessage != null)
+            // Start the host
+            host.Run();
+        }
+
+        public static IHostBuilder CreateHostBuilder(string[] args)
+        {
+            return Host.CreateDefaultBuilder(args)
+                .ConfigureServices((hostContext, services) =>
                 {
-                    string response = responseMessage.Body.ToString();
-                    await receiver.CompleteMessageAsync(responseMessage);
+                    // Add services
+                    services.AddEndpointsApiExplorer();
+                    services.AddSwaggerGen();
+                    services.AddMemoryCache();
+                    services.Configure<IpRateLimitOptions>(hostContext.Configuration.GetSection("IpRateLimiting"));
+                    services.AddSingleton<IIpPolicyStore, MemoryCacheIpPolicyStore>();
+                    services.AddSingleton<IRateLimitCounterStore, MemoryCacheRateLimitCounterStore>();
+                    services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+                    services.AddSingleton<IProcessingStrategy, AsyncKeyLockProcessingStrategy>();
+                    services.AddSingleton<ServiceBusClient>(serviceProvider =>
+                    {
+                        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+                        string connectionString = configuration.GetConnectionString("ServiceBusConnection");
+                        return new ServiceBusClient(connectionString);
+                    });
+                    services.AddTransient<IValidator<LinkdinProfile>, LinkdinProfileValidator>();
+                    services.AddValidatorsFromAssemblyContaining<Program>();
+                })
+                .ConfigureLogging((hostContext, logging) =>
+                {
+                    logging.ClearProviders();
+                    logging.AddConsole();
+                })
+                .ConfigureAppConfiguration((hostContext, config) =>
+                {
+                    config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+                })
+                .ConfigureWebHostDefaults(webBuilder =>
+                {
+                    webBuilder.UseStartup<Startup>();
+                });
+        }
+    }
 
-                    return response;
+    public class Startup
+    {
+        public IConfiguration Configuration { get; }
+
+        public Startup(IConfiguration configuration)
+        {
+            Configuration = configuration;
+        }
+
+        public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddControllers();
+        }
+
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ServiceBusClient client)
+        {
+            if (env.IsDevelopment())
+            {
+                app.UseDeveloperExceptionPage();
+                app.UseSwagger();
+                app.UseSwaggerUI();
+            }
+            else
+            {
+                app.UseExceptionHandler("/error");// This line sets up an exception handler that will catch any unhandled exceptions  during the processing of a request
+                app.UseHsts();
+            }
+            app.UseHttpsRedirection(); //This line sets up a middleware that automatically redirects HTTP requests to HTTPS
+
+            app.UseRouting();
+
+            app.UseAuthorization();
+
+            // Apply rate limiting middleware
+            app.UseIpRateLimiting();
+
+            app.UseEndpoints(endpoints =>
+            {
+                endpoints.MapControllers();
+            });
+
+            // Create background task to receive Service Bus messages
+            Task.Run(() => ReceiveServiceBusMessages(client));
+        }
+
+        private async Task ReceiveServiceBusMessages(ServiceBusClient client)
+        {
+            string receiveQueueName = Configuration.GetValue<string>("ReceiveQueueName")!;
+            var partitionKey = Guid.NewGuid().ToString();
+
+            await using (ServiceBusReceiver receiver = client.CreateReceiver(receiveQueueName))
+            {
+                while (true)
+                {
+                    var receivedMessages = await receiver.ReceiveMessagesAsync(maxMessages: 100);
+
+                    if (receivedMessages.Any())
+                    {
+                        foreach (var message in receivedMessages)
+                        {
+                            if (message.PartitionKey == partitionKey)
+                            {
+                                string response = message.Body.ToString();
+                                await receiver.CompleteMessageAsync(message);
+
+                                // Do something with the response
+                                Console.WriteLine($"Received message: {response}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // No messages received, wait for a short duration
+                        await Task.Delay(100);
+                    }
                 }
             }
         }
     }
-    await context.Response.WriteAsJsonAsync(new { Data = "There was no matching response"});
-    return null;
-});
+    //[Route("api/[controller]")]
+    //[ApiController]
+    public class LinkdinProfileController : ControllerBase
+    {
+        private readonly ServiceBusClient _client;
+        private readonly IConfiguration _configuration;
+        private readonly IValidator<LinkdinProfile> _validator;
 
-app.Run();
+        public LinkdinProfileController(ServiceBusClient client, IConfiguration configuration, IValidator<LinkdinProfile> validator)
+        {
+            _client = client;
+            _configuration = configuration;
+            _validator = validator;
+        }
+
+        [HttpPost("sendlink")]
+        public async Task<IActionResult> SendLink([FromBody] LinkdinProfile linkdinProfile)
+        {
+            var validationResults = _validator.Validate(linkdinProfile);
+
+            if (!validationResults.IsValid)
+            {
+                return BadRequest(validationResults.Errors);
+            }
+
+            string sendQueueName = _configuration.GetValue<string>("SendQueueName")!;
+            var partitionKey = Guid.NewGuid().ToString();
+            string linkedInProfileLink = linkdinProfile.ProfileId;
+
+            await using (ServiceBusSender sender = _client.CreateSender(sendQueueName))
+            {
+                ServiceBusMessage message = new ServiceBusMessage(linkedInProfileLink)
+                {
+                    PartitionKey = partitionKey
+                };
+
+                try
+                {
+                    await sender.SendMessageAsync(message);
+                    await Task.Delay(8000);
+                }
+                catch (Exception)
+                {
+                    throw;
+                }
+            }
+            return Ok();
+        }
+        [HttpGet("test")]
+        public IActionResult TestEndpoint()
+        {
+
+            return Ok("This is a test endpoint.");
+        }
+    }
+}
