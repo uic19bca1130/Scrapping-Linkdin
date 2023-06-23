@@ -17,6 +17,8 @@ namespace Scrapping_Linkdin
             host.Run();
         }
 
+
+
         public static IHostBuilder CreateHostBuilder(string[] args)
         {
             return Host.CreateDefaultBuilder(args)
@@ -70,6 +72,7 @@ namespace Scrapping_Linkdin
             services.AddControllers();
         }
 
+
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env, ServiceBusClient client)
         {
             if (env.IsDevelopment())
@@ -83,9 +86,9 @@ namespace Scrapping_Linkdin
                 app.UseExceptionHandler("/error");// This line sets up an exception handler that will catch any unhandled exceptions  during the processing of a request
                 app.UseHsts();
             }
-            app.UseHttpsRedirection(); //This line sets up a middleware that automatically redirects HTTP requests to HTTPS
+            app.UseHttpsRedirection(); //This line sets up a middleware that automatically redirects HTTP requests to HTTPS 
 
-            app.UseRouting();
+            app.UseRouting();   
 
             app.UseAuthorization();
 
@@ -96,7 +99,7 @@ namespace Scrapping_Linkdin
             {
                 endpoints.MapControllers();
             });
-
+            
             // Create background task to receive Service Bus messages
             Task.Run(() => ReceiveServiceBusMessages(client));
         }
@@ -135,8 +138,6 @@ namespace Scrapping_Linkdin
             }
         }
     }
-    //[Route("api/[controller]")]
-    //[ApiController]
     public class LinkdinProfileController : ControllerBase
     {
         private readonly ServiceBusClient _client;
@@ -182,6 +183,9 @@ namespace Scrapping_Linkdin
                 }
             }
             return Ok();
+             
+
+            //Endpoint to test the rate limiter
         }
         [HttpGet("test")]
         public IActionResult TestEndpoint()
@@ -189,5 +193,16 @@ namespace Scrapping_Linkdin
 
             return Ok("This is a test endpoint.");
         }
+        [HttpGet("MYAPI")]
+        public IActionResult MYAPIEndpoint2()
+        {
+            return Ok("This is MYAPI..");
+        }
+        [HttpGet("YOURAPI")]
+        public IActionResult YOURAPIEndpoint2()
+        {
+            return Ok("This is YOURAPI..");
+        }
+
     }
 }
